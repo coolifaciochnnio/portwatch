@@ -29,6 +29,13 @@ function diffStatuses(prev: PortStatus[], curr: PortStatus[]): PortChange[] {
   return changes;
 }
 
+/**
+ * Starts monitoring the configured ports for open/close changes.
+ *
+ * @param onChanges - Callback invoked whenever port state changes are detected.
+ * @param configPath - Optional path to a config file; defaults to the standard config location.
+ * @returns A handle with a `stop()` method to cancel monitoring.
+ */
 export function startMonitor(
   onChanges: ChangeHandler,
   configPath?: string
@@ -38,25 +45,34 @@ export function startMonitor(
 
   let previous: PortStatus[] = [];
   let stopped = false;
+  let timer: ReturnType<typeof setTimeout> | undefined;
 
   const tick = async () => {
     if (stopped) return;
-    const current = await scanPorts(ports, host, timeoutMs);
 
-    if (previous.length > 0) {
-      const changes = diffStatuses(previous, current);
-      if (changes.length > 0) onChanges(changes);
+    try {
+      const current = await scanPorts(ports, host, timeoutMs);
+
+      if (previous.length > 0) {
+        const changes = diffStatuses(previous, current);
+        if (changes.length > 0) onChanges(changes);
+      }
+
+      previous = current;
+    } catch (err) {
+      // Log scan errors but keep the monitor running
+      console.error('[portwatch] Scan error:', err);
     }
 
-    previous = current;
-    if (!stopped) setTimeout(tick, intervalMs);
+    if (!stopped) timer = setTimeout(tick, intervalMs);
   };
 
-  setTimeout(tick, 0);
+  timer = setTimeout(tick, 0);
 
   return {
     stop: () => {
       stopped = true;
+      if (timer !== undefined) clearTimeout(timer);
     },
   };
 }
