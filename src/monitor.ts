@@ -1,78 +1,66 @@
-import { scanPorts, PortStatus } from './scanner';
-import { loadConfig } from './config';
+import { getOpenPorts } from './scanner';
+import { PortConfig } from './config';
+import { appendEvent } from './history';
+import { shouldAlert, createAlertEvent, runNotifyCommand } from './alerts';
 
-export type ChangeType = 'opened' | 'closed';
-
-export interface PortChange {
+export interface PortEvent {
   port: number;
-  change: ChangeType;
-  detectedAt: Date;
+  status: 'open' | 'closed';
+  timestamp: string;
 }
 
-export type ChangeHandler = (changes: PortChange[]) => void;
+export type PortStatusMap = Record<number, 'open' | 'closed'>;
 
-export interface MonitorHandle {
-  stop: () => void;
-}
+export function diffStatuses(
+  previous: PortStatusMap,
+  current: PortStatusMap
+): PortEvent[] {
+  const events: PortEvent[] = [];
+  const allPorts = new Set([...Object.keys(previous), ...Object.keys(current)].map(Number));
 
-function diffStatuses(prev: PortStatus[], curr: PortStatus[]): PortChange[] {
-  const changes: PortChange[] = [];
-  const now = new Date();
-
-  for (const c of curr) {
-    const p = prev.find((s) => s.port === c.port);
-    if (!p) continue;
-    if (!p.open && c.open) changes.push({ port: c.port, change: 'opened', detectedAt: now });
-    if (p.open && !c.open) changes.push({ port: c.port, change: 'closed', detectedAt: now });
+  for (const port of allPorts) {
+    const prev = previous[port];
+    const curr = current[port];
+    if (prev !== curr && curr !== undefined) {
+      events.push({ port, status: curr, timestamp: new Date().toISOString() });
+    }
   }
 
-  return changes;
+  return events;
 }
 
-/**
- * Starts monitoring the configured ports for open/close changes.
- *
- * @param onChanges - Callback invoked whenever port state changes are detected.
- * @param configPath - Optional path to a config file; defaults to the standard config location.
- * @returns A handle with a `stop()` method to cancel monitoring.
- */
-export function startMonitor(
-  onChanges: ChangeHandler,
-  configPath?: string
-): MonitorHandle {
-  const config = loadConfig(configPath);
-  const { ports, host, intervalMs, timeoutMs } = config;
-
-  let previous: PortStatus[] = [];
-  let stopped = false;
-  let timer: ReturnType<typeof setTimeout> | undefined;
+export async function startMonitor(
+  config: PortConfig,
+  onEvent: (event: PortEvent) => void
+): Promise<void> {
+  const { ports, interval = 5000, alerts } = config;
+  let previousStatus: PortStatusMap = {};
 
   const tick = async () => {
-    if (stopped) return;
+    const openPorts = await getOpenPorts(ports);
+    const currentStatus: PortStatusMap = {};
 
-    try {
-      const current = await scanPorts(ports, host, timeoutMs);
-
-      if (previous.length > 0) {
-        const changes = diffStatuses(previous, current);
-        if (changes.length > 0) onChanges(changes);
-      }
-
-      previous = current;
-    } catch (err) {
-      // Log scan errors but keep the monitor running
-      console.error('[portwatch] Scan error:', err);
+    for (const port of ports) {
+      currentStatus[port] = openPorts.includes(port) ? 'open' : 'closed';
     }
 
-    if (!stopped) timer = setTimeout(tick, intervalMs);
+    const events = diffStatuses(previousStatus, currentStatus);
+
+    for (const event of events) {
+      appendEvent(event);
+      onEvent(event);
+
+      if (alerts && shouldAlert(event, alerts)) {
+        const alertEvent = createAlertEvent(event, alerts);
+        if (alertEvent && alerts.notifyCommand) {
+          await runNotifyCommand(alerts.notifyCommand, alertEvent);
+        }
+      }
+    }
+
+    previousStatus = currentStatus;
   };
 
-  timer = setTimeout(tick, 0);
-
-  return {
-    stop: () => {
-      stopped = true;
-      if (timer !== undefined) clearTimeout(timer);
-    },
-  };
+  await tick();
+  setInterval(tick, interval);
 }
