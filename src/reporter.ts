@@ -16,6 +16,10 @@ export interface ReportSummary {
   generatedAt: string;
 }
 
+/**
+ * Builds a summary report from a list of port events.
+ * Optionally filters by date range or specific port number.
+ */
 export function buildReport(events: PortEvent[], options: ReportOptions = {}): ReportSummary {
   let filtered = [...events];
 
@@ -48,6 +52,9 @@ export function buildReport(events: PortEvent[], options: ReportOptions = {}): R
   };
 }
 
+/**
+ * Formats a report summary as either human-readable text or JSON.
+ */
 export function formatReport(summary: ReportSummary, format: 'text' | 'json' = 'text'): string {
   if (format === 'json') {
     return JSON.stringify(summary, null, 2);
@@ -65,8 +72,19 @@ export function formatReport(summary: ReportSummary, format: 'text' | 'json' = '
   return lines.join('\n');
 }
 
+/**
+ * Returns true if the report summary contains no events.
+ */
+export function isEmptyReport(summary: ReportSummary): boolean {
+  return summary.totalEvents === 0;
+}
+
 export function printReport(events: PortEvent[], options: ReportOptions = {}): void {
   const summary = buildReport(events, options);
+  if (isEmptyReport(summary)) {
+    console.log(colorize('bold', 'No events found for the given filters.'));
+    return;
+  }
   const output = formatReport(summary, options.format ?? 'text');
   console.log(output);
 }
