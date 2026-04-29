@@ -38,6 +38,14 @@ describe('buildReport', () => {
     expect(report.totalEvents).toBe(3);
   });
 
+  it('filters by port and since date together', () => {
+    const since = new Date('2024-01-01T11:00:00.000Z');
+    const report = buildReport(sampleEvents, { port: 3000, since });
+    expect(report.totalEvents).toBe(1);
+    expect(report.openCount).toBe(0);
+    expect(report.closeCount).toBe(1);
+  });
+
   it('returns null mostActivePort when no events', () => {
     const report = buildReport([]);
     expect(report.mostActivePort).toBeNull();
